@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,7 +20,6 @@ func HandleBucketView(s3 S3, templates fs.FS, allowDelete bool, listRecursive bo
 		Key          string
 		Size         int64
 		LastModified time.Time
-		Owner        string
 		Icon         string
 		IsFolder     bool
 		DisplayName  string
@@ -47,6 +47,11 @@ func HandleBucketView(s3 S3, templates fs.FS, allowDelete bool, listRecursive bo
 			Prefix:    path,
 		}
 		objectCh := s3.ListObjects(r.Context(), bucketName, opts)
+		tz, err := time.LoadLocation("America/Los_Angeles")
+		if err != nil {
+			tz = time.Local
+			fmt.Printf("Error getting timezone: %v\n", err)
+		}
 		for object := range objectCh {
 			if object.Err != nil {
 				handleHTTPError(w, fmt.Errorf("error listing objects: %w", object.Err))
@@ -56,14 +61,18 @@ func HandleBucketView(s3 S3, templates fs.FS, allowDelete bool, listRecursive bo
 			obj := objectWithIcon{
 				Key:          object.Key,
 				Size:         object.Size,
-				LastModified: object.LastModified,
-				Owner:        object.Owner.DisplayName,
+				LastModified: object.LastModified.In(tz),
 				Icon:         icon(object.Key),
 				IsFolder:     strings.HasSuffix(object.Key, "/"),
 				DisplayName:  strings.TrimSuffix(strings.TrimPrefix(object.Key, path), "/"),
 			}
 			objs = append(objs, obj)
 		}
+
+		slices.SortFunc(objs, func(a, b objectWithIcon) int {
+			return b.LastModified.Compare(a.LastModified)
+		})
+
 		data := pageData{
 			BucketName:  bucketName,
 			Objects:     objs,
